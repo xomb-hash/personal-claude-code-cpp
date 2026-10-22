@@ -3,6 +3,7 @@
 #include <string>
 #include <fstream>
 #include <iterator>
+#include <filesystem>
 
 #include <cpr/cpr.h>
 #include <nlohmann/json.hpp>
@@ -41,17 +42,27 @@ int main(int argc, char *argv[])
         {"role", "user"},
         {"content", prompt},
     }});
+    json tools = json::array();
 
-    json tools = json::array({{{"type", "function"},
-                               {"function",
-                                {{"name", "Read"},
-                                 {"description", "Read and return the contents of a file"},
-                                 {"parameters",
-                                  {{"type", "object"},
-                                   {"properties", {{"file_path", {{"type", "string"}, {"description", "The path to the file to read"}}}}},
-                                   {"required", json::array({"file_path"})}
+    // Tool 1: Read
+    tools.push_back(json::object({{"type", "function"},
+                                  {"function", json::object({{"name", "Read"},
+                                                             {"description", "Read and return the contents of a file"},
+                                                             {"parameters", json::object({{"type", "object"},
+                                                                                          {"properties", json::object({{"file_path", json::object({{"type", "string"},
+                                                                                                                                                   {"description", "The path to the file to read"}})}})},
+                                                                                          {"required", json::array({"file_path"})}})}})}}));
 
-                                  }}}}}});
+    // Tool 2: Write
+    tools.push_back(json::object({{"type", "function"},
+                                  {"function", json::object({{"name", "Write"},
+                                                             {"description", "Write content to a file"},
+                                                             {"parameters", json::object({{"type", "object"},
+                                                                                          {"required", json::array({"file_path", "content"})},
+                                                                                          {"properties", json::object({{"file_path", json::object({{"type", "string"},
+                                                                                                                                                   {"description", "The path of the file to write to"}})},
+                                                                                                                       {"content", json::object({{"type", "string"},
+                                                                                                                                                 {"description", "The content to write to the file"}})}})}})}})}}));
 
     // entering the agentic loop
 
@@ -93,12 +104,15 @@ int main(int argc, char *argv[])
                 std::string function_name = tool_call["function"]["name"];
                 std::string tool_output = "";
 
+                std::string argument_str = tool_call["function"]["arguments"];
+                json args = json::parse(argument_str);
+
                 if (function_name == "Read")
                 {
                     // parsing the arguments JSON string
-                    std::string argument_str = tool_call["function"]["arguments"]; // value of itself is JSON formatted string --"{\"file_path\":\"main.cpp\"}"
-                    json args = json::parse(argument_str);                         // convert the json string to a string object -->{"file_path":"main.cpp"}
-                    std::string file_path = args["file_path"];                     // using the file path as the key
+                    // std::string argument_str = tool_call["function"]["arguments"]; // value of itself is JSON formatted string --"{\"file_path\":\"main.cpp\"}"
+                    // json args = json::parse(argument_str);                         // convert the json string to a string object -->{"file_path":"main.cpp"}
+                    std::string file_path = args["file_path"]; // using the file path as the key
 
                     // reading the file from the local file system
 
@@ -118,6 +132,30 @@ int main(int argc, char *argv[])
                         tool_output = std::string(
                             (std::istreambuf_iterator<char>(file)),
                             std::istreambuf_iterator<char>());
+                    }
+                }
+                else if (function_name == "Write")
+                {
+                    std::string file_path = args["file_path"];
+                    std::string content = args["content"];
+
+                    // ensuring parent directories exist if a nested path provided
+                    std::filesystem::path p(file_path);
+                    if (p.has_parent_path())
+                    {
+                        std::filesystem::create_directories(p.parent_path());
+                    }
+                    // ofstream creates the file if missing or overwrites it by default
+                    std::ofstream out_file(file_path, std::ios::out | std::ios::trunc);
+                    if (!out_file.is_open())
+                    {
+                        tool_output = "Error:failed to write to file" + file_path;
+                    }
+                    else
+                    {
+                        out_file << content;
+                        out_file.close();
+                        tool_output = "Successfully wrote to" + file_path;
                     }
                 }
                 messages.push_back({{"role", "tool"},
@@ -202,7 +240,7 @@ name             field
     |            |
     v            v
 Execute Read    Print text
-    |
+    |codecrafters testcodecrafters testcodecrafters test
     v
 Print file
 contents
