@@ -1,6 +1,8 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <fstream>
+#include <iterator>
 
 #include <cpr/cpr.h>
 #include <nlohmann/json.hpp>
@@ -50,27 +52,165 @@ int main(int argc, char *argv[])
             {"Authorization", "Bearer " + api_key},
             {"Content-Type", "application/json"}},
         cpr::Body{request_body.dump()});
+    /**
+     *
+     *   cpr::Response response = cpr::Post(
+    cpr::Url{base_url + "/chat/completions"},
+    cpr::Header{
+        {"Authorization", "Bearer " + api_key},
+        {"Content-Type", "application/json"}},
+    cpr::Body{request_body.dump()});
+    send the request to llm
 
-    if (response.status_code != 200)
+
+    cpr --> librarty that makes http request
+    POST--> send the http request to api
+
+    Read main.cpp and explain what it does.
+
+    ur prorgram creates  ajson request with prompt model and avialbe tools
+    base_url = "https://openrouter.ai/api/v1"+ "/chat/completions"
+    api endpoint that recieves ur api request
+    https://openrouter.ai/api/v1/chat/completions
+
+    cpr::Header{ provide information about the request
+{"Authorization", "Bearer " + api_key},--> send the api key to server so server can authenticate it
+{"Content-Type", "application/json"}--> this tell that request body contains JSON
+ cpr::Body{request_body.dump()});--> .dump convert normal string inb to json object
+
+ 200--> succed
+ 400-> invalid reuest
+ 401--> authentication failed
+ 403--> acess forbiden
+ 429--> rate limit issues
+ 500--> rever error
+
+
+              LLM RESPONSE
+               |
+               v
+      Does it contain
+      a tool request?
+         /         \
+       YES          NO
+        |            |
+        v            v
+  Check tool       Check content
+  name             field
+        |            |
+        v            v
+  Execute Read    Print text
+        |
+        v
+  Print file
+  contents
+
+     */
+
+    if (response.status_code != 200) // if HTTP request doent succeeded
     {
         std::cerr << "HTTP error: " << response.status_code << "\n"
                   << response.text << std::endl;
         return 1;
     }
+    // string string containing json
+    json result = json::parse(response.text); // the server return the respnse and response.text conatain its body as stirng
 
-    json result = json::parse(response.text);
-
-    if (!result.contains("choices") || result["choices"].empty())
+    if (!result.contains("choices") || result["choices"].empty()) // if result doesnt contian choices or if choices is their but empty
     {
         std::cerr << "No choices in response" << std::endl;
         return 1;
     }
+    auto message = result["choices"][0]["message"]; // first choice
 
-    if (result["choices"][0]["message"].contains("content") &&
-        !result["choices"][0]["message"]["content"].is_null())
+    if (message.contains("tool_calls") && !message["tool_calls"].empty())
     {
-        std::cout << result["choices"][0]["message"]["content"].get<std::string>();
+        auto tool_call = message["tool_calls"][0];                 // tool call extracted by the llm first tool
+        std::string function_name = tool_call["function"]["name"]; // extract the name of the requested function
+        if (function_name == "Read")
+        {
+            // parsing the arguments JSON string
+            std::string argument_str = tool_call["function"]["arguments"]; // value of itself is JSON formatted string --"{\"file_path\":\"main.cpp\"}"
+            json args = json::parse(argument_str);                         // convert the json string to a string object -->{"file_path":"main.cpp"}
+            std::string file_path = args["file_path"];                     // using the file path as the key
+
+            // reading the file from the local file system
+
+            /**
+             * the llm chooces the pathe
+             *
+             * cpp program receives the path
+             * cpp program performs the file operation
+             */
+            std::ifstream file(file_path);
+            if (!file.is_open())
+            {
+                std::cerr << "Failed to open the file " << file_path << std::endl;
+                return 1;
+            }
+            std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            // read all the characters from the file and store them in a string
+            // read the entire file
+
+            // print raw file content directly
+            std::cout << content;
+        }
+    }
+    // no tool call
+    else if (message.contains("content") && !message["content"].is_null())
+    {
+        // Fallback to standard mesage content if no tool call was made
+        std::cout << message["content"].get<std::string>();
     }
 
     return 0;
 }
+
+/**
+ * {
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_abc123",
+            "type": "function",
+            "function": {
+              "name": "Read",
+              "arguments": "{\"file_path\": \"/path/to/file.txt\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ]
+}
+ *
+ *
+ *
+ *
+ *
+ * {
+  "tool_calls": [
+    {
+      "function": {
+        "name": "read"
+      }
+    },
+    {
+      "function": {
+        "name": "write"
+      }
+    }
+  ]
+}
+
+
+
+
+
+ */
