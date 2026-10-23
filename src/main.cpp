@@ -4,6 +4,10 @@
 #include <fstream>
 #include <iterator>
 #include <filesystem>
+#include <string>
+#include <map>
+#include <array>
+#include <cstdio>
 
 #include <cpr/cpr.h>
 #include <nlohmann/json.hpp>
@@ -38,10 +42,153 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    json messages = json::array({{
-        {"role", "user"},
-        {"content", prompt},
-    }});
+    // =========================================================================
+    // STAGE #JD8: SKILL INVOCATION (Level 2) - REPLACING THE PROMPT
+
+    if (prompt.length() > 1 && prompt[0] == '/')
+    {
+        // extracting the name
+        std::string requested_skill = prompt.substr(1);
+        // triming any accidental trailing newspace
+        requested_skill.erase(requested_skill.find_last_not_of(" \n\r\t") + 1);
+
+        std::filesystem::path target_skill = std::filesystem::path(".claude/skills") / requested_skill / "SKILL.md";
+
+        if (std::filesystem::exists(target_skill))
+        {
+            std::ifstream file(target_skill);
+            std::string line;
+            int dash_count = 0;
+            std::string skill_body = "";
+
+            while (std::getline(file, line))
+            {
+                if (!line.empty() && line.back() == '\r')
+                {
+                    line.pop_back();
+                }
+                if (line == "---")
+                {
+                    dash_count++;
+                    continue;
+                }
+
+                // if we passed second dfas we are in the bodies
+                if (dash_count >= 2)
+                {
+                    skill_body += line + "\n";
+                }
+            }
+            // replading the user prompt with actual instruction
+            if (!skill_body.empty())
+            {
+                prompt = skill_body;
+            }
+        }
+    }
+
+    std::map<std::string, std::string> available_skills;
+    // key--> skill name , value=skill description
+
+    // path to the skills diectory relative to where program is executed
+    std::filesystem::path skills_dir = ".claude/skills"; //  stores the path to skill directory/path inside .claude directory
+
+    // stores path no the actual folder
+
+    // chekcing if .claude/skills is actually exists and is a folder before scanning
+    if (std::filesystem::exists(skills_dir) && std::filesystem::is_directory(skills_dir))
+    {
+        // Iterating thorugh each elemnt inside ".claude/skills/" "./claude/skills/apple"
+        for (const auto &entry : std::filesystem::directory_iterator(skills_dir))
+        {
+            // Each skill is a folder , so loose file if any exisy
+            if (entry.is_directory())
+            {
+                // construct the path to SKILL.md inside subfolder ".claude/skills/<folder>/SKILL.md"
+                std::filesystem::path skill_file = entry.path() / "SKILL.md"; // '/' joins filesystem paths
+                // proceed if SKILL.md actually exists inside this skill folde
+
+                if (std::filesystem::exists(skill_file))
+                {
+                    std::ifstream file(skill_file); // open the file
+                    std::string line;
+                    // State flag--> tracks whether ur inside "---" formatter block
+                    /**
+                     * frontmatter is a meta data sectio n qat the beginnig of a document often writtemn using
+                     * YAML and surrounded by ---
+                     */
+                    bool in_frontmatter = false;
+                    std::string name = "";
+                    std::string description = "";
+
+                    while (std::getline(file, line)) // read every line from the file
+                    {
+                        // while going through every line line may contain ---\r carriage return \n is removed automatically have to remove it
+                        if (!line.empty() && line.back() == '\r')
+                        {
+                            line.pop_back();
+                        }
+
+                        // check for the YAML frontmatter boundary marker "---"
+
+                        if (line == "---")
+                        {
+                            if (!in_frontmatter) // 1st "---" frontmatter
+                            {
+                                in_frontmatter = true;
+                                continue;
+                            }
+                            else
+                            {
+                                // second "---" encountered :frontmatter is finished
+                                // break out of the loop
+                                break;
+                            }
+                        }
+                        // if we are inside the two ---
+                        if (in_frontmatter)
+                        {
+                            if (line.rfind("name: ", 0) == 0)
+                            {
+                                // extract everythingg after name
+                                name = line.substr(6);
+                            }
+                            else if (line.rfind("description: ", 0) == 0)
+                            {
+                                // extract everythinh after descriptiom
+                                description = line.substr(13);
+                            }
+                        }
+                    }
+                    if (!name.empty() && !description.empty())
+                    {
+                        available_skills[name] = description;
+                    }
+                }
+            }
+        }
+    }
+
+    json messages = json::array();
+    if (!available_skills.empty())
+    {
+        std::string system_prompt = "You have access tp the following skills:\n\n";
+        for (const auto &[skill_name, skill_desc] : available_skills)
+        {
+            system_prompt += "- " + skill_name + ": " + skill_desc + "\n";
+        }
+        if (!system_prompt.empty() && system_prompt.back() == '\n')
+        {
+            system_prompt.pop_back();
+        }
+        // pushing th esystem prompt
+        messages.push_back(json::object({{"role", "system"},
+                                         {"content", system_prompt}}));
+    }
+    // push the user prompt SECOND
+    messages.push_back(json::object({{"role", "user"},
+                                     {"content", prompt}}));
+
     json tools = json::array();
 
     // Tool 1: Read
