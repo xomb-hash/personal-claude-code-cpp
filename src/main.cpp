@@ -63,6 +63,19 @@ int main(int argc, char *argv[])
                                                                                                                                                    {"description", "The path of the file to write to"}})},
                                                                                                                        {"content", json::object({{"type", "string"},
                                                                                                                                                  {"description", "The content to write to the file"}})}})}})}})}}));
+    tools.push_back(json::object({{"type", "function"},
+                                  {"function", json::object({{"name", "Bash"},
+                                                             {"description", "Execute a shell command"},
+                                                             {"parameters", json::object({{"type", "object"},
+                                                                                          {"required", json::array({"command"})},
+                                                                                          {"properties", json::object({{"command", json::object({{"type", "string"},
+                                                                                                                                                 {"description", "The command to execute"}})}})}})}
+
+                                               })}
+
+    }
+
+                                 ));
 
     // entering the agentic loop
 
@@ -156,6 +169,57 @@ int main(int argc, char *argv[])
                         out_file << content;
                         out_file.close();
                         tool_output = "Successfully wrote to" + file_path;
+                    }
+                }
+                else if (function_name == "Bash")
+                {
+                    std::string command = args["command"];        // args contain json object
+                    std::string full_command = command + " 2>&1"; // ls -la 2>&1
+                    /*popen expect command as C style string +snted by const char*
+                        full_command.c_str() provides a pointer to the string
+                        null-terminated character daTA
+
+                        "r"--> means open the pipe for reading
+                        "w"--> ur program, writes to the command stdin
+
+                        popen starts a command interpreter to execute
+                        the command and establishes
+
+                         the pipe between command and ur program
+
+                        popen execute the command be3acuse may originate
+                        from ai model must not blindly trust it
+                        arbitaty command may expose secrets peofrm unwanted action
+                    */
+                    FILE *pipe = popen(full_command.c_str(), "r");
+                    if (!pipe) // if pipe is nullptr
+                    {
+                        tool_output = "Error: Failed to run the command";
+                        /**
+                         * However, this message is generic: a failure to
+                         *  create the pipe does not
+                         * necessarily mean that the shell command itself failed.
+                         */
+                    }
+                    else
+                    {
+                        /**
+                         * buffer is a temporary area of memory used to hold data
+                         * while processing it
+                         * 256 is the size of each read operation
+                         *
+                         */
+                        std::array<char, 256> buffer;                                // crwating a buffer array
+                        while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) // collecting commands output
+                        {
+                            /**
+                             * buffer.data --> return pointer to the first char of thearray
+                             * fgets(buffer.data(), buffer.size(), pipe)
+                             * ask C to read character from pipe into buffere
+                             */
+                            tool_output += buffer.data();
+                        }
+                        pclose(pipe); // affter collecting the output program must close the pipe
                     }
                 }
                 messages.push_back({{"role", "tool"},
