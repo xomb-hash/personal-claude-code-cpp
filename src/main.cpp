@@ -8,11 +8,31 @@
 #include <map>
 #include <array>
 #include <cstdio>
+#include <sstream>
+#include <vector>
 
 #include <cpr/cpr.h>
 #include <nlohmann/json.hpp>
 
 using json = nlohmann::json;
+// adding a string replace
+/**
+ * we ar usning arghument replacemnt so we dont have to write
+ * s,me skill again again
+ * cpp doesnt provide string replacement
+ * have to build own
+ */
+void replace_all(std::string &str, const std::string &from, const std::string &to)
+{
+    if (from.empty())
+        return;
+    size_t start_pos = 0;
+    while ((start_pos = str.find(from, start_pos)) != std::string::npos)
+    {
+        str.replace(start_pos, from.length(), to);
+        start_pos += to.length();
+    }
+}
 
 int main(int argc, char *argv[])
 {
@@ -43,22 +63,62 @@ int main(int argc, char *argv[])
     }
 
     // =========================================================================
-    // STAGE #JD8: SKILL INVOCATION (Level 2) - REPLACING THE PROMPT
+    // STAGE #JD8: SKILL INVOCATION (Level 2) -with ARGUMENT
 
-    if (prompt.length() > 1 && prompt[0] == '/')
+    if (prompt.length() > 1 && prompt[0] == '/') // /apple
     {
-        // extracting the name
-        std::string requested_skill = prompt.substr(1);
-        // triming any accidental trailing newspace
-        requested_skill.erase(requested_skill.find_last_not_of(" \n\r\t") + 1);
+        size_t first_space = prompt.find(' ');
+        // sepratre the sklill name form its argument
+        std::string requested_skill;   // store skill na,me
+        std::string argument_str = ""; // store everything after skill name
 
-        std::filesystem::path target_skill = std::filesystem::path(".claude/skills") / requested_skill / "SKILL.md";
+        if (first_space != std::string::npos)
+        {
+            requested_skill = prompt.substr(1, first_space - 1);
+            argument_str = prompt.substr(first_space + 1);
+        }
+        else
+        {
+            requested_skill = prompt.substr(1);
+        }
 
+        // triming the trailing white space fro the skill name
+
+        size_t endpos = requested_skill.find_last_not_of(" \t\r\n");
+
+        if (endpos != std::string::npos)
+        {
+            requested_skill.erase(endpos + 1); // "appl
+        } //  "-> appl
+        else
+        {
+            requested_skill.clear();
+        }
+
+        std::vector<std::string> args_list;
+        std::stringstream ss(argument_str); // take word seprated by space
+        std::string arg;
+
+        while (ss >> arg)
+        {
+            args_list.push_back(arg);
+        } // converting string argument into a vector
+
+        // locate the skill file
+
+        std::filesystem::path target_skill =
+            std::filesystem::path(".claude/skills") / requested_skill / "SKILL.md";
+
+        //.claude/skills/apple/SKILL.md
+
+        // if the targeted fiel skill
         if (std::filesystem::exists(target_skill))
         {
-            std::ifstream file(target_skill);
+            std::ifstream file(target_skill); // opeing the file
             std::string line;
+
             int dash_count = 0;
+
             std::string skill_body = "";
 
             while (std::getline(file, line))
@@ -67,21 +127,31 @@ int main(int argc, char *argv[])
                 {
                     line.pop_back();
                 }
+
                 if (line == "---")
                 {
                     dash_count++;
                     continue;
                 }
 
-                // if we passed second dfas we are in the bodies
                 if (dash_count >= 2)
                 {
-                    skill_body += line + "\n";
+                    skill_body += line + '\n';
                 }
             }
-            // replading the user prompt with actual instruction
+
             if (!skill_body.empty())
             {
+                // substitue all placeholder in the body befor using it as the prompt
+                // replace_all(skill_body,"$ARGUMENTS",argument_str);
+
+                for (size_t i = 0; i < args_list.size(); ++i)
+                {
+                    replace_all(skill_body, "$ARGUMENTS[" + std::to_string(i) + "]", args_list[i]);
+                    replace_all(skill_body, "$" + std::to_string(i), args_list[i]);
+                }
+
+                replace_all(skill_body, "$ARGUMENTS", argument_str);
                 prompt = skill_body;
             }
         }
