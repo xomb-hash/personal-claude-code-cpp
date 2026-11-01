@@ -142,6 +142,7 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
             break;
         }
     }
+    std::vector<std::string> substituted_skill_messages; // storing each skill with body in the vector with header
 
     if (!invoked_skills.empty())
     {
@@ -153,29 +154,29 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
         {
             args_list.push_back(arg); // storing each argument in vector
         }
-        std::string combined_prompt = "";
+        // std::string combined_prompt = "";
 
         for (const auto &skill_name : invoked_skills)
         {
-            std::filesystem::path skill_path = std::filesystem::path(".claude/skills") / skill_name / "SKILL.md";
+            std::filesystem::path skill_dir = std::filesystem::path(".claude/skills") / skill_name;
+            std::filesystem::path skill_path = skill_dir / "SKILL.md";
             std::string body = read_skill_body(skill_path);
 
             if (!body.empty())
             {
                 for (size_t i = 0; i < args_list.size(); i++)
                 {
-                    replace_all(body, "$ARGUMENTS[" + std::to_string(i) + "]", args_list[i]);
+                    replace_all(body, "$ARGUMENTS[" + std::to_string(i) + "]", args_list[i]); // replacing all argument blanks with actual argument
                     replace_all(body, "$" + std::to_string(i), args_list[i]);
                 }
 
                 replace_all(body, "$ARGUMENTS", remaining_args);
-                combined_prompt += body;
-            }
-        }
+                // combined_prompt += body;// muliplt skill can be invoke together
 
-        if (!combined_prompt.empty())
-        {
-            prompt = combined_prompt;
+                std::header = "Skill: " + skill_name + "(located at" + skill_dir.string() + ")\n" + "Path in the instruction are relative to that folder";
+
+                substituted_skill_messages.push_back(header + body);
+            }
         }
     }
     std::cerr << "DEBUG 3: Expanded prompt = [" << prompt << "]\n";
@@ -351,8 +352,19 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
                                          {"content", system_prompt}}));
     }
     // push the user prompt SECOND
-    messages.push_back(json::object({{"role", "user"},
-                                     {"content", prompt}}));
+    if (!substituted_skill_messages.empty())
+    {
+        for (const auto &msg_body : substituted_skill_messages)
+        {
+            messages.push_back(json::object({{"role", "user"},
+                                             {"content", msg_body}}));
+        }
+    }
+    else
+    {
+        messages.push_back(json::object({{"role", "user"},
+                                         {"content", prompt}}));
+    }
 
     //____________________________________
     // TOOL DEFINATIONS(Read,Write,Bash)
