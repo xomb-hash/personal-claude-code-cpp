@@ -173,7 +173,7 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
                 replace_all(body, "$ARGUMENTS", remaining_args);
                 // combined_prompt += body;// muliplt skill can be invoke together
 
-                std::header = "Skill: " + skill_name + "(located at" + skill_dir.string() + ")\n" + "Path in the instruction are relative to that folder";
+                std::string header = "Skill: " + skill_name + "(located at" + skill_dir.string() + ")\n" + "Path in the instruction are relative to that folder";
 
                 substituted_skill_messages.push_back(header + body);
             }
