@@ -466,16 +466,23 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
                      * cpp program receives the path
                      * cpp program performs the file operation
                      */
-                    std::ifstream file(file_path);
-                    if (!file.is_open())
+                    if (std::filesystem::is_directory(file_path))
                     {
-                        tool_output = "Error: Failed to open the file" + file_path;
+                        tool_output = "Error: " + file_path + " is a directory, not a file";
                     }
                     else
                     {
-                        tool_output = std::string(
-                            (std::istreambuf_iterator<char>(file)),
-                            std::istreambuf_iterator<char>());
+                        std::ifstream file(file_path);
+                        if (!file.is_open())
+                        {
+                            tool_output = "Error: Failed to open the file" + file_path;
+                        }
+                        else
+                        {
+                            tool_output = std::string(
+                                (std::istreambuf_iterator<char>(file)),
+                                std::istreambuf_iterator<char>());
+                        }
                     }
                 }
                 else if (function_name == "Write")
@@ -553,6 +560,43 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
                         pclose(pipe); // affter collecting the output program must close the pipe
                     }
                 }
+                else if (available_skills.find(function_name) != available_skills.end())
+                {
+                    std::filesystem::path skill_dir = std::filesystem::path(".claude/skills") / function_name;
+                    std::filesystem::path skill_path = skill_dir / "SKILL.md";
+                    std::string body = read_skill_body(skill_path);
+
+                    std::string header = "Skill: " + function_name + "(located at " + skill_dir.string() + ")\n" + "Path in the instruction below  are relative to that folder.\n\n";
+                    tool_output = header + body;
+                }
+                else if (function_name == "Skill")
+                {
+                    // In case the model calls a tool named 'Skill' with {"skill": "<name>"}
+                    std::string target_name = "";
+
+                    if (args.contains("skill"))
+                    {
+                        target_name = args["skill"];
+                    }
+                    else if (args.contains("name"))
+                    {
+                        target_name = args["name"];
+                    }
+                    if (!target_name.empty() && available_skills.find(target_name) != available_skills.end())
+                    {
+                        std::filesystem::path skill_dir = std::filesystem::path(".claude/skills") / target_name;
+                        std::filesystem::path skill_path = skill_dir / "SKILL.md";
+                        std::string body = read_skill_body(skill_path);
+
+                        std::string header = "Skill: " + target_name + "(located at " + skill_dir.string() + ")\n" + "Path in the instructions below  are relative to that folder.\n\n";
+                        tool_output = header + body;
+                    }
+                    else
+                    {
+                        tool_output = "Error:Skill not found";
+                    }
+                }
+
                 messages.push_back({{"role", "tool"},
                                     {"tool_call_id", call_id},
                                     {"content", tool_output}});
