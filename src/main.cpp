@@ -34,24 +34,61 @@ void replace_all(std::string &str, const std::string &from, const std::string &t
     }
 }
 
-int main(int argc, char *argv[])
+std::string read_skill_body(const std::filesystem::path &skill_path)
 {
+    std::string body = "";
+    if (std::filesystem::exists(skill_path))
+    {
+        std::ifstream file(skill_path); // opeing the file
+        std::string line;
+
+        int dash_count = 0;
+
+        while (std::getline(file, line))
+        {
+            if (!line.empty() && line.back() == '\r')
+            {
+                line.pop_back();
+            }
+
+            if (line == "---")
+            {
+                dash_count++;
+                continue;
+            }
+
+            if (dash_count >= 2)
+            {
+                body += line + '\n';
+            }
+        }
+    }
+    return body;
+}
+// c++n expect main
+// to receive cpmmand line argumenrt as an array of C style string
+int main(int argc, char *argv[]) // argc --> argument count  how many command line  argument werte passed. |||| argv( arravy of strings) is the command line passed to c++ program
+{
+    //./your_program.sh ,"-p ,"/apple /grape 4127"
     if (argc < 3 || std::string(argv[1]) != "-p")
     {
         std::cerr << "Expected first argument to be '-p'" << std::endl;
         return 1;
     }
 
-    std::string prompt = argv[2];
+    std::string prompt = argv[2]; // getting the prompt
+    std::cerr << "DEBUG 1: Program started. Prompt = " << prompt << "\n";
 
     if (prompt.empty())
     {
-        std::cerr << "Prompt must not be empty" << std::endl;
-        return 1;
+        std::cerr << "Prompt must not be empty";
     }
 
+    // export OPENROUTER_API_KEY =sk - or -v1 - 174ed2c94730898726c15784b4b1773fba9cf15bab29d258df64114d03a75bfa // api key is for authorisation
+    //  export OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"        // where to send the message /communicate with LLM
+
+    const char *base_url_env = std::getenv("OPENROUTER_BASE_URL"); // gets url from my system
     const char *api_key_env = std::getenv("OPENROUTER_API_KEY");
-    const char *base_url_env = std::getenv("OPENROUTER_BASE_URL");
 
     std::string api_key = api_key_env ? api_key_env : "";
     std::string base_url = base_url_env ? base_url_env : "https://openrouter.ai/api/v1";
@@ -61,10 +98,91 @@ int main(int argc, char *argv[])
         std::cerr << "OPENROUTER_API_KEY is not set" << std::endl;
         return 1;
     }
+    std::cerr << "DEBUG 2: API key found\n";
 
     // =========================================================================
-    // STAGE #JD8: SKILL INVOCATION (Level 2) -with ARGUMENT
+    // STAGE SKILL STACKING AND INVOCATION
+    // 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
+    // skill is reusable instructon template wher as argument is u passass template i.e giving additional knowledge so it can perform task
+    // == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == == =
 
+    std::vector<std::string> invoked_skills;
+    std::string remaining_args = "";
+
+    std::istringstream iss(prompt); // convert  stirng to stream so we can read it word by word
+    std::string token;
+    size_t consumed_chars = 0;
+
+    while (iss >> token) // putitng word in token /apple
+    {
+        bool is_valid_skill = false;
+        size_t token_pos = prompt.find(token, consumed_chars);
+        if (token.size() > 1 && token[0] == '/')
+        {
+            std::string candidate_name = token.substr(1);                                                             // apple
+            std::filesystem::path skill_path = std::filesystem::path(".claude/skills") / candidate_name / "SKILL.md"; // building path
+
+            if (std::filesystem::exists(skill_path))
+            {
+                invoked_skills.push_back(candidate_name); // adding it to the vector
+                is_valid_skill = true;
+                size_t token_pos = prompt.find(token, consumed_chars);
+                consumed_chars = token_pos + token.size();
+                // we need to fnmd the position wher e skill stops and  argument  starts point sto index where it start
+            }
+        }
+
+        if (!is_valid_skill)
+        {
+
+            if (token_pos != std::string::npos)
+            {
+                remaining_args = prompt.substr(token_pos);
+            }
+            break;
+        }
+    }
+
+    if (!invoked_skills.empty())
+    {
+        std::vector<std::string> args_list;
+        std::istringstream arg_stream(remaining_args);
+        std::string arg;
+
+        while (arg_stream >> arg)
+        {
+            args_list.push_back(arg); // storing each argument in vector
+        }
+        std::string combined_prompt = "";
+
+        for (const auto &skill_name : invoked_skills)
+        {
+            std::filesystem::path skill_path = std::filesystem::path(".claude/skills") / skill_name / "SKILL.md";
+            std::string body = read_skill_body(skill_path);
+
+            if (!body.empty())
+            {
+                for (size_t i = 0; i < args_list.size(); i++)
+                {
+                    replace_all(body, "$ARGUMENTS[" + std::to_string(i) + "]", args_list[i]);
+                    replace_all(body, "$" + std::to_string(i), args_list[i]);
+                }
+
+                replace_all(body, "$ARGUMENTS", remaining_args);
+                combined_prompt += body;
+            }
+        }
+
+        if (!combined_prompt.empty())
+        {
+            prompt = combined_prompt;
+        }
+    }
+    std::cerr << "DEBUG 3: Expanded prompt = [" << prompt << "]\n";
+
+    /*
+
+    -------------------- ONE SKILLED CODE-------------------------------------
     if (prompt.length() > 1 && prompt[0] == '/') // /apple
     {
         size_t first_space = prompt.find(' ');
@@ -74,8 +192,8 @@ int main(int argc, char *argv[])
 
         if (first_space != std::string::npos)
         {
-            requested_skill = prompt.substr(1, first_space - 1);
-            argument_str = prompt.substr(first_space + 1);
+            requested_skill = prompt.substr(1, first_space - 1);//apple
+            argument_str = prompt.substr(first_space + 1);// argument
         }
         else
         {
@@ -92,10 +210,8 @@ int main(int argc, char *argv[])
         } //  "-> appl
         else
         {
-            requested_skill.clear();
+            requested_skill.clear();//makes the string empty
         }
-
-        std::vector<std::string> args_list;
         std::stringstream ss(argument_str); // take word seprated by space
         std::string arg;
 
@@ -108,55 +224,32 @@ int main(int argc, char *argv[])
 
         std::filesystem::path target_skill =
             std::filesystem::path(".claude/skills") / requested_skill / "SKILL.md";
+        // '/' joind the path component
+        .claude/skills is where all skills are stored
+        //.claude/skills/apple/SKILL.md// could have usee the + operator too
 
-        //.claude/skills/apple/SKILL.md
 
         // if the targeted fiel skill
-        if (std::filesystem::exists(target_skill))
+
+        if (!skill_body.empty())
         {
-            std::ifstream file(target_skill); // opeing the file
-            std::string line;
+            // substitue all placeholder in the body befor using it as the prompt
+            // replace_all(skill_body,"$ARGUMENTS",argument_str);
 
-            int dash_count = 0;
-
-            std::string skill_body = "";
-
-            while (std::getline(file, line))
+            for (size_t i = 0; i < args_list.size(); ++i)
             {
-                if (!line.empty() && line.back() == '\r')
-                {
-                    line.pop_back();
-                }
-
-                if (line == "---")
-                {
-                    dash_count++;
-                    continue;
-                }
-
-                if (dash_count >= 2)
-                {
-                    skill_body += line + '\n';
-                }
+                replace_all(skill_body, "$ARGUMENTS[" + std::to_string(i) + "]", args_list[i]);
+                replace_all(skill_body, "$" + std::to_string(i), args_list[i]);
             }
 
-            if (!skill_body.empty())
-            {
-                // substitue all placeholder in the body befor using it as the prompt
-                // replace_all(skill_body,"$ARGUMENTS",argument_str);
-
-                for (size_t i = 0; i < args_list.size(); ++i)
-                {
-                    replace_all(skill_body, "$ARGUMENTS[" + std::to_string(i) + "]", args_list[i]);
-                    replace_all(skill_body, "$" + std::to_string(i), args_list[i]);
-                }
-
-                replace_all(skill_body, "$ARGUMENTS", argument_str);
-                prompt = skill_body;
-            }
+            replace_all(skill_body, "$ARGUMENTS", argument_str);
+            prompt = skill_body;
         }
     }
-
+}*/
+    //__________________________________________________________________________________
+    // PROGRESSIVE DISCLOSURE (System Prompt Discovery)
+    //__________________________________________________________________________
     std::map<std::string, std::string> available_skills;
     // key--> skill name , value=skill description
 
@@ -238,11 +331,13 @@ int main(int argc, char *argv[])
             }
         }
     }
-
+    //____________________________________________
+    // INITIALIZE CONVERSATION HISTORY
+    //____________________________________________
     json messages = json::array();
     if (!available_skills.empty())
     {
-        std::string system_prompt = "You have access tp the following skills:\n\n";
+        std::string system_prompt = "You have access to the following skills:\n\n";
         for (const auto &[skill_name, skill_desc] : available_skills)
         {
             system_prompt += "- " + skill_name + ": " + skill_desc + "\n";
@@ -259,6 +354,9 @@ int main(int argc, char *argv[])
     messages.push_back(json::object({{"role", "user"},
                                      {"content", prompt}}));
 
+    //____________________________________
+    // TOOL DEFINATIONS(Read,Write,Bash)
+    //____________________________________
     json tools = json::array();
 
     // Tool 1: Read
@@ -293,15 +391,17 @@ int main(int argc, char *argv[])
     }
 
                                  ));
-
-    // entering the agentic loop
-
+    //***********************************************************************
+    // AGENTIC LOOP
+    //********************************************* */
     while (true)
     {
         json request_body = {
             {"model", "anthropic/claude-haiku-4.5"}, // Required model name
             {"messages", messages},
             {"tools", tools}};
+
+        std::cerr << "DEBUG 4: Sending request to LLM\n";
         cpr::Response response = cpr::Post(
             cpr::Url{base_url + "/chat/completions"},
             cpr::Header{
@@ -323,6 +423,8 @@ int main(int argc, char *argv[])
             return 1;
         }
         auto message = result["choices"][0]["message"]; // first choice
+        std::cerr << "\nDEBUG: HTTP status = " << response.status_code << "\n";
+        std::cerr << "DEBUG: LLM message = " << message.dump(2) << "\n";
 
         messages.push_back(message);
 
