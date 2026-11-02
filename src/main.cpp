@@ -312,7 +312,7 @@ std::string run_agent_loop(
                         }
                         else
                         {
-                            std::string header = "Skill" + target_name + "(located at" + skill_dir.string() + ")\n" + "Paths in the instructions below ar relative to that folder.\n\n";
+                            std::string header = "Skill" + target_name + "(located at " + skill_dir.string() + ")\n" + "Paths in the instructions below ar relative to that folder.\n\n";
                             tool_output = header + body;
                         }
                     }
@@ -366,6 +366,15 @@ std::string run_agent_loop(
         }
     }
 }
+void trim_str(std::string &s)
+{
+    size_t p = s.find_first_not_of(" \t\r\n");
+    size_t q = s.find_last_not_of(" \t\r\n");
+    if (p == std::string::npos)
+        s.clear();
+    else
+        s = s.substr(p, q - p + 1);
+}
 
 // c++n expect main
 // to receive cpmmand line argumenrt as an array of C style string
@@ -413,14 +422,6 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
     std::filesystem::path skills_dir = ".claude/skills"; //  stores the path to skill directory/path inside .claude directory
 
     // stores path no the actual folder
-    auto trim = [](std::string &s) { // learn
-        size_t p = s.find_first_not_of(" \t\r\n");
-        size_t q = s.find_last_not_of(" \t\r\n");
-        if (p == std::string::npos)
-            s.clear();
-        else
-            s = s.substr(p, q - p + 1);
-    }; // learn
 
     // chekcing if .claude/skills is actually exists and is a folder before scanning
     if (std::filesystem::exists(skills_dir) && std::filesystem::is_directory(skills_dir))
@@ -481,25 +482,20 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
                             if (line.rfind("name: ", 0) == 0)
                             {
                                 // extract everythingg after name
-                                name = line.substr(6);
+                                name = line.substr(5);
+                                trim_str(name);
                             }
                             else if (line.rfind("description: ", 0) == 0)
                             {
                                 // extract everythinh after descriptiom
-                                description = line.substr(13);
+                                description = line.substr(12);
+                                trim_str(description);
                             }
                             else if (line.rfind("context: ", 0) == 0)
                             {
-                                std::string ctx = line.substr(9);
+                                std::string ctx = line.substr(8);
+                                trim_str(ctx);
                                 // trimming white spacer
-
-                                size_t first = ctx.find_first_not_of(" \t\r\n");
-                                size_t last = ctx.find_last_not_of(" \t\r\n");
-
-                                if (first != std::string::npos)
-                                {
-                                    ctx = ctx.substr(first, last - first + 1);
-                                }
                                 if (ctx == "fork")
                                 {
                                     is_forked = true;
@@ -510,6 +506,10 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
                     if (!name.empty() && !description.empty())
                     {
                         available_skills[name] = SkillInfo{name, description, is_forked};
+                    }
+                    if (name.empty())
+                    {
+                        name = entry.path().filename().string();
                     }
                 }
             }
@@ -589,7 +589,7 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
                 replace_all(body, "$ARGUMENTS", remaining_args);
                 // combined_prompt += body;// muliplt skill can be invoke together
 
-                std::string header = "Skill: " + skill_name + "(located at" + skill_dir.string() + ")\n" + "Path in the instruction are relative to that folder";
+                std::string header = "Skill: " + skill_name + "(located at " + skill_dir.string() + ")\n" + "Path in the instruction are relative to that folder.\n\n";
 
                 substituted_skill_messages.push_back(header + body);
             }
@@ -743,12 +743,12 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
     tools.push_back(json::object({{"type", "function"},
                                   {"function", json::object({{"name", "Skill"},
                                                              {"description", "Load a skill's instruction into the conversation"},
-                                                             {"parametes", json::object({{"type", "object"},
-                                                                                         {"required", json::array({"name"})},
-                                                                                         {"properties", json::object({{"name", json::object({{"type", "string"},
-                                                                                                                                             {"description", "The name of the skill to use"}})},
-                                                                                                                      {"args", json::object({{"type", "string"},
-                                                                                                                                             {"description", "Optional arguments for the skill"}})}})}})}})}})
+                                                             {"parameters", json::object({{"type", "object"},
+                                                                                          {"required", json::array({"name"})},
+                                                                                          {"properties", json::object({{"name", json::object({{"type", "string"},
+                                                                                                                                              {"description", "The name of the skill to use"}})},
+                                                                                                                       {"args", json::object({{"type", "string"},
+                                                                                                                                              {"description", "Optional arguments for the skill"}})}})}})}})}})
 
     );
     // =========================================================================
