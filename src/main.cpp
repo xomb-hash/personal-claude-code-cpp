@@ -260,6 +260,11 @@ std::string run_agent_loop(
                     }
 
                     auto it = available_skills.find(target_name);
+                    // why
+                    if (target_name.empty() && available_skills.size() == 1)
+                    {
+                        target_name = available_skills.begin()->first;
+                    }
                     if (!target_name.empty() && available_skills.find(target_name) != available_skills.end())
                     {
                         std::filesystem::path skill_dir = std::filesystem::path(".claude/skills") / target_name;
@@ -408,6 +413,14 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
     std::filesystem::path skills_dir = ".claude/skills"; //  stores the path to skill directory/path inside .claude directory
 
     // stores path no the actual folder
+    auto trim = [](std::string &s) { // learn
+        size_t p = s.find_first_not_of(" \t\r\n");
+        size_t q = s.find_last_not_of(" \t\r\n");
+        if (p == std::string::npos)
+            s.clear();
+        else
+            s = s.substr(p, q - p + 1);
+    }; // learn
 
     // chekcing if .claude/skills is actually exists and is a folder before scanning
     if (std::filesystem::exists(skills_dir) && std::filesystem::is_directory(skills_dir))
