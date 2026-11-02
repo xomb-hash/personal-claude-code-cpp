@@ -22,6 +22,16 @@ using json = nlohmann::json;
  * cpp doesnt provide string replacement
  * have to build own
  */
+
+struct SkillInfo
+{
+    std::string name;
+    std::string description;
+    bool is_forked = false;
+};
+
+std::map<std::string, SkillInfo> available_skills;
+
 void replace_all(std::string &str, const std::string &from, const std::string &to)
 {
     if (from.empty())
@@ -65,6 +75,293 @@ std::string read_skill_body(const std::filesystem::path &skill_path)
     }
     return body;
 }
+
+std::string run_agent_loop(
+    json &messages,
+    const json &tools,
+    const std::string &base_url,
+    const std::string &api_key,
+    const std::map<std::string, SkillInfo> &available_skills
+
+)
+{
+    while (true)
+    {
+        json request_body = {
+            {"model", "anthropic/claude-haiku-4.5"}, // Required model name
+            {"messages", messages},
+            {"tools", tools}};
+
+        std::cerr << "DEBUG 4: Sending request to LLM\n";
+        cpr::Response response = cpr::Post(
+            cpr::Url{base_url + "/chat/completions"},
+            cpr::Header{
+                {"Authorization", "Bearer " + api_key},
+                {"Content-Type", "application/json"}},
+            cpr::Body{request_body.dump()});
+
+        if (response.status_code != 200) // if HTTP request doent succeeded
+        {
+            std::cerr << "HTTP error: " << response.status_code << "\n"
+                      << response.text << std::endl;
+            return "";
+        }
+        json result = json::parse(response.text); // the server return the respnse and response.text conatain its body as stirng
+
+        if (!result.contains("choices") || result["choices"].empty()) // if result doesnt contian choices or if choices is their but empty
+        {
+            std::cerr << "No choices in response" << std::endl;
+            return "";
+        }
+        auto message = result["choices"][0]["message"]; // first choice
+        std::cerr << "\nDEBUG: HTTP status = " << response.status_code << "\n";
+        std::cerr << "DEBUG: LLM message = " << message.dump(2) << "\n";
+
+        messages.push_back(message);
+
+        if (message.contains("tool_calls") && !message["tool_calls"].empty())
+        {
+            for (auto &tool_call : message["tool_calls"]) // tool call extracted by the llm first tool
+            {                                             //}
+                std::string call_id = tool_call["id"];
+                std::string function_name = tool_call["function"]["name"];
+                std::string tool_output = "";
+
+                std::string argument_str = tool_call["function"]["arguments"];
+                json args = json::parse(argument_str);
+
+                if (function_name == "Read")
+                {
+                    // parsing the arguments JSON string
+                    // std::string argument_str = tool_call["function"]["arguments"]; // value of itself is JSON formatted string --"{\"file_path\":\"main.cpp\"}"
+                    // json args = json::parse(argument_str);                         // convert the json string to a string object -->{"file_path":"main.cpp"}
+                    std::string file_path = args["file_path"]; // using the file path as the key
+
+                    // reading the file from the local file system
+
+                    /**
+                     * the llm chooces the pathe
+                     *
+                     * cpp program receives the path
+                     * cpp program performs the file operation
+                     */
+                    if (std::filesystem::is_directory(file_path))
+                    {
+                        tool_output = "Error: " + file_path + " is a directory, not a file";
+                    }
+                    else
+                    {
+                        std::ifstream file(file_path);
+                        if (!file.is_open())
+                        {
+                            tool_output = "Error: Failed to open the file" + file_path;
+                        }
+                        else
+                        {
+                            tool_output = std::string(
+                                (std::istreambuf_iterator<char>(file)),
+                                std::istreambuf_iterator<char>());
+                        }
+                    }
+                }
+                else if (function_name == "Write")
+                {
+                    std::string file_path = args["file_path"];
+                    std::string content = args["content"];
+
+                    // ensuring parent directories exist if a nested path provided
+                    std::filesystem::path p(file_path);
+                    if (p.has_parent_path())
+                    {
+                        std::filesystem::create_directories(p.parent_path());
+                    }
+                    // ofstream creates the file if missing or overwrites it by default
+                    std::ofstream out_file(file_path, std::ios::out | std::ios::trunc);
+                    if (!out_file.is_open())
+                    {
+                        tool_output = "Error:failed to write to file" + file_path;
+                    }
+                    else
+                    {
+                        out_file << content;
+                        out_file.close();
+                        tool_output = "Successfully wrote to" + file_path;
+                    }
+                }
+                else if (function_name == "Bash")
+                {
+                    std::string command = args["command"];        // args contain json object
+                    std::string full_command = command + " 2>&1"; // ls -la 2>&1
+                    /*popen expect command as C style string +snted by const char*
+                        full_command.c_str() provides a pointer to the string
+                        null-terminated character daTA
+
+                        "r"--> means open the pipe for reading
+                        "w"--> ur program, writes to the command stdin
+
+                        popen starts a command interpreter to execute
+                        the command and establishes
+
+                         the pipe between command and ur program
+
+                        popen execute the command be3acuse may originate
+                        from ai model must not blindly trust it
+                        arbitaty command may expose secrets peofrm unwanted action
+                    */
+                    FILE *pipe = popen(full_command.c_str(), "r");
+                    if (!pipe) // if pipe is nullptr
+                    {
+                        tool_output = "Error: Failed to run the command";
+                        /**
+                         * However, this message is generic: a failure to
+                         *  create the pipe does not
+                         * necessarily mean that the shell command itself failed.
+                         */
+                    }
+                    else
+                    {
+                        /**
+                         * buffer is a temporary area of memory used to hold data
+                         * while processing it
+                         * 256 is the size of each read operation
+                         *
+                         */
+                        std::array<char, 256> buffer;                                // crwating a buffer array
+                        while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) // collecting commands output
+                        {
+                            /**
+                             * buffer.data --> return pointer to the first char of thearray
+                             * fgets(buffer.data(), buffer.size(), pipe)
+                             * ask C to read character from pipe into buffere
+                             */
+                            tool_output += buffer.data();
+                        }
+                        pclose(pipe); // affter collecting the output program must close the pipe
+                    }
+                }
+
+                else if (function_name == "Skill" || function_name == "skill")
+                {
+
+                    // In case the model calls a tool named 'Skill' with {"skill": "<name>"}
+                    std::string target_name = "";
+
+                    if (args.contains("skill_name"))
+                    {
+                        target_name = args["skill_name"];
+                    }
+                    if (args.contains("skill"))
+                    {
+                        target_name = args["skill"];
+                    }
+                    else if (args.contains("name"))
+                    {
+                        target_name = args["name"];
+                    }
+
+                    auto it = available_skills.find(target_name);
+                    if (!target_name.empty() && available_skills.find(target_name) != available_skills.end())
+                    {
+                        std::filesystem::path skill_dir = std::filesystem::path(".claude/skills") / target_name;
+                        std::filesystem::path skill_path = skill_dir / "SKILL.md";
+                        std::string body = read_skill_body(skill_path);
+
+                        std::string skill_args = "";
+                        if (args.contains("args") && !args["args"].is_null())
+                        {
+                            skill_args = args["args"].get<std::string>();
+                        }
+                        // learntgsi part
+                        if (!skill_args.empty())
+                        {
+                            std::vector<std::string> args_list;
+                            std::istringstream arg_stream(skill_args);
+                            std::string arg;
+                            while (arg_stream >> arg)
+                            {
+                                args_list.push_back(arg);
+                            }
+
+                            replace_all(body, "$ARGUMENTS", skill_args);
+                            for (size_t i = 0; i < args_list.size(); ++i)
+                            {
+                                replace_all(body, "$ARGUMENTS[" + std::to_string(i) + "]", args_list[i]);
+                                replace_all(body, "$" + std::to_string(i), args_list[i]);
+                            }
+                        }
+
+                        if (it->second.is_forked)
+                        {
+
+                            json sub_message = json::array();
+                            sub_message.push_back(json::object({{"role", "user"},
+                                                                {"content", body}}));
+
+                            std::string sub_result = run_agent_loop(
+                                sub_message,
+                                tools,
+                                base_url, api_key,
+                                available_skills);
+
+                            tool_output = "Skill " + target_name + "ran in a seperate context and return: " + sub_result;
+                        }
+                        else
+                        {
+                            std::string header = "Skill" + target_name + "(located at" + skill_dir.string() + ")\n" + "Paths in the instructions below ar relative to that folder.\n\n";
+                            tool_output = header + body;
+                        }
+                    }
+                    else
+                    {
+                        tool_output = "Error:Skill not found";
+                    }
+                } // last
+                else if (available_skills.find(function_name) != available_skills.end())
+                {
+                    auto it = available_skills.find(function_name);
+                    std::filesystem::path skill_dir = std::filesystem::path(".claude/skills") / function_name;
+                    std::filesystem::path skill_path = skill_dir / "SKILL.md";
+                    std::string body = read_skill_body(skill_path);
+
+                    if (it->second.is_forked)
+                    {
+                        json sub_message = json::array();
+                        sub_message.push_back(json::object({{"role", "user"},
+                                                            {"content", body}}));
+
+                        std::string sub_result = run_agent_loop(
+                            sub_message,
+                            tools,
+                            base_url, api_key,
+                            available_skills);
+
+                        tool_output = "Skill " + function_name + "ran in a seperate context and return: " + sub_result;
+                    }
+                    else
+                    {
+                        std::string header = "Skill" + function_name + "(located at" + skill_dir.string() + ")\n" + "Paths in the instructions below ar relative to that folder.\n\n";
+                        tool_output = header + body;
+                    }
+                }
+
+                messages.push_back({{"role", "tool"},
+                                    {"tool_call_id", call_id},
+                                    {"content", tool_output}});
+            }
+        }
+        else
+        {
+            // no tool call
+            if (message.contains("content") && !message["content"].is_null())
+            {
+                // Fallback to standard mesage content if no tool call was made
+                return message["content"].get<std::string>();
+            }
+            return "";
+        }
+    }
+}
+
 // c++n expect main
 // to receive cpmmand line argumenrt as an array of C style string
 int main(int argc, char *argv[]) // argc --> argument count  how many command line  argument werte passed. |||| argv( arravy of strings) is the command line passed to c++ program
@@ -104,7 +401,7 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
     // 1. DISCOVER AVAILABLE SKILLS FIRST (Populate available_skills)
     // =========================================================================
 
-    std::map<std::string, std::string> available_skills;
+    std::map<std::string, SkillInfo> available_skills;
     // key--> skill name , value=skill description
 
     // path to the skills diectory relative to where program is executed
@@ -137,7 +434,7 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
                     bool in_frontmatter = false;
                     std::string name = "";
                     std::string description = "";
-
+                    bool is_forked = false;
                     while (std::getline(file, line)) // read every line from the file
                     {
                         // while going through every line line may contain ---\r carriage return \n is removed automatically have to remove it
@@ -163,8 +460,11 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
                             }
                         }
                         // if we are inside the two ---
+                        // check this code for later
+
                         if (in_frontmatter)
                         {
+
                             if (line.rfind("name: ", 0) == 0)
                             {
                                 // extract everythingg after name
@@ -175,11 +475,28 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
                                 // extract everythinh after descriptiom
                                 description = line.substr(13);
                             }
+                            else if (line.rfind("context: ", 0) == 0)
+                            {
+                                std::string ctx = line.substr(9);
+                                // trimming white spacer
+
+                                size_t first = ctx.find_first_not_of(" \t\r\n");
+                                size_t last = ctx.find_last_not_of(" \t\r\n");
+
+                                if (first != std::string::npos)
+                                {
+                                    ctx = ctx.substr(first, last - first + 1);
+                                }
+                                if (ctx == "fork")
+                                {
+                                    is_forked = true;
+                                }
+                            }
                         }
                     }
                     if (!name.empty() && !description.empty())
                     {
-                        available_skills[name] = description;
+                        available_skills[name] = SkillInfo{name, description, is_forked};
                     }
                 }
             }
@@ -345,9 +662,9 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
     if (!available_skills.empty())
     {
         std::string system_prompt = "You have access to the following skills:\n\n";
-        for (const auto &[skill_name, skill_desc] : available_skills)
+        for (const auto &[skill_name, info] : available_skills)
         {
-            system_prompt += "- " + skill_name + ": " + skill_desc + "\n";
+            system_prompt += "- " + info.name + ": " + info.description + "\n";
         }
         if (!system_prompt.empty() && system_prompt.back() == '\n')
         {
@@ -421,244 +738,12 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
                                                                                                                                              {"description", "Optional arguments for the skill"}})}})}})}})}})
 
     );
-    //***********************************************************************
-    // AGENTIC LOOP
-    //********************************************* */
-    while (true)
-    {
-        json request_body = {
-            {"model", "anthropic/claude-haiku-4.5"}, // Required model name
-            {"messages", messages},
-            {"tools", tools}};
+    // =========================================================================
+    // 5. RUN THE MAIN AGENT LOOP & PRINT RESULT
+    // =========================================================================
+    std::string result = run_agent_loop(messages, tools, base_url, api_key, available_skills);
+    std::cout << result;
 
-        std::cerr << "DEBUG 4: Sending request to LLM\n";
-        cpr::Response response = cpr::Post(
-            cpr::Url{base_url + "/chat/completions"},
-            cpr::Header{
-                {"Authorization", "Bearer " + api_key},
-                {"Content-Type", "application/json"}},
-            cpr::Body{request_body.dump()});
-
-        if (response.status_code != 200) // if HTTP request doent succeeded
-        {
-            std::cerr << "HTTP error: " << response.status_code << "\n"
-                      << response.text << std::endl;
-            return 1;
-        }
-        json result = json::parse(response.text); // the server return the respnse and response.text conatain its body as stirng
-
-        if (!result.contains("choices") || result["choices"].empty()) // if result doesnt contian choices or if choices is their but empty
-        {
-            std::cerr << "No choices in response" << std::endl;
-            return 1;
-        }
-        auto message = result["choices"][0]["message"]; // first choice
-        std::cerr << "\nDEBUG: HTTP status = " << response.status_code << "\n";
-        std::cerr << "DEBUG: LLM message = " << message.dump(2) << "\n";
-
-        messages.push_back(message);
-
-        if (message.contains("tool_calls") && !message["tool_calls"].empty())
-        {
-            for (auto &tool_call : message["tool_calls"]) // tool call extracted by the llm first tool
-            {                                             //}
-                std::string call_id = tool_call["id"];
-                std::string function_name = tool_call["function"]["name"];
-                std::string tool_output = "";
-
-                std::string argument_str = tool_call["function"]["arguments"];
-                json args = json::parse(argument_str);
-
-                if (function_name == "Read")
-                {
-                    // parsing the arguments JSON string
-                    // std::string argument_str = tool_call["function"]["arguments"]; // value of itself is JSON formatted string --"{\"file_path\":\"main.cpp\"}"
-                    // json args = json::parse(argument_str);                         // convert the json string to a string object -->{"file_path":"main.cpp"}
-                    std::string file_path = args["file_path"]; // using the file path as the key
-
-                    // reading the file from the local file system
-
-                    /**
-                     * the llm chooces the pathe
-                     *
-                     * cpp program receives the path
-                     * cpp program performs the file operation
-                     */
-                    if (std::filesystem::is_directory(file_path))
-                    {
-                        tool_output = "Error: " + file_path + " is a directory, not a file";
-                    }
-                    else
-                    {
-                        std::ifstream file(file_path);
-                        if (!file.is_open())
-                        {
-                            tool_output = "Error: Failed to open the file" + file_path;
-                        }
-                        else
-                        {
-                            tool_output = std::string(
-                                (std::istreambuf_iterator<char>(file)),
-                                std::istreambuf_iterator<char>());
-                        }
-                    }
-                }
-                else if (function_name == "Write")
-                {
-                    std::string file_path = args["file_path"];
-                    std::string content = args["content"];
-
-                    // ensuring parent directories exist if a nested path provided
-                    std::filesystem::path p(file_path);
-                    if (p.has_parent_path())
-                    {
-                        std::filesystem::create_directories(p.parent_path());
-                    }
-                    // ofstream creates the file if missing or overwrites it by default
-                    std::ofstream out_file(file_path, std::ios::out | std::ios::trunc);
-                    if (!out_file.is_open())
-                    {
-                        tool_output = "Error:failed to write to file" + file_path;
-                    }
-                    else
-                    {
-                        out_file << content;
-                        out_file.close();
-                        tool_output = "Successfully wrote to" + file_path;
-                    }
-                }
-                else if (function_name == "Bash")
-                {
-                    std::string command = args["command"];        // args contain json object
-                    std::string full_command = command + " 2>&1"; // ls -la 2>&1
-                    /*popen expect command as C style string +snted by const char*
-                        full_command.c_str() provides a pointer to the string
-                        null-terminated character daTA
-
-                        "r"--> means open the pipe for reading
-                        "w"--> ur program, writes to the command stdin
-
-                        popen starts a command interpreter to execute
-                        the command and establishes
-
-                         the pipe between command and ur program
-
-                        popen execute the command be3acuse may originate
-                        from ai model must not blindly trust it
-                        arbitaty command may expose secrets peofrm unwanted action
-                    */
-                    FILE *pipe = popen(full_command.c_str(), "r");
-                    if (!pipe) // if pipe is nullptr
-                    {
-                        tool_output = "Error: Failed to run the command";
-                        /**
-                         * However, this message is generic: a failure to
-                         *  create the pipe does not
-                         * necessarily mean that the shell command itself failed.
-                         */
-                    }
-                    else
-                    {
-                        /**
-                         * buffer is a temporary area of memory used to hold data
-                         * while processing it
-                         * 256 is the size of each read operation
-                         *
-                         */
-                        std::array<char, 256> buffer;                                // crwating a buffer array
-                        while (fgets(buffer.data(), buffer.size(), pipe) != nullptr) // collecting commands output
-                        {
-                            /**
-                             * buffer.data --> return pointer to the first char of thearray
-                             * fgets(buffer.data(), buffer.size(), pipe)
-                             * ask C to read character from pipe into buffere
-                             */
-                            tool_output += buffer.data();
-                        }
-                        pclose(pipe); // affter collecting the output program must close the pipe
-                    }
-                }
-                else if (available_skills.find(function_name) != available_skills.end())
-                {
-                    std::filesystem::path skill_dir = std::filesystem::path(".claude/skills") / function_name;
-                    std::filesystem::path skill_path = skill_dir / "SKILL.md";
-                    std::string body = read_skill_body(skill_path);
-
-                    std::string header = "Skill: " + function_name + "(located at " + skill_dir.string() + ")\n" + "Path in the instruction below  are relative to that folder.\n\n";
-                    tool_output = header + body;
-                }
-                else if (function_name == "Skill" || function_name == "skill")
-                {
-                    // In case the model calls a tool named 'Skill' with {"skill": "<name>"}
-                    std::string target_name = "";
-
-                    if (args.contains("skill_name"))
-                    {
-                        target_name = args["skill_name"];
-                    }
-                    if (args.contains("skill"))
-                    {
-                        target_name = args["skill"];
-                    }
-                    else if (args.contains("name"))
-                    {
-                        target_name = args["name"];
-                    }
-                    if (!target_name.empty() && available_skills.find(target_name) != available_skills.end())
-                    {
-                        std::filesystem::path skill_dir = std::filesystem::path(".claude/skills") / target_name;
-                        std::filesystem::path skill_path = skill_dir / "SKILL.md";
-                        std::string body = read_skill_body(skill_path);
-
-                        std::string skill_args = "";
-                        if (args.contains("args") && !args["args"].is_null())
-                        {
-                            skill_args = args["args"].get<std::string>();
-                        }
-                        // learntgsi part
-                        if (!skill_args.empty())
-                        {
-                            std::vector<std::string> args_list;
-                            std::istringstream arg_stream(skill_args);
-                            std::string arg;
-                            while (arg_stream >> arg)
-                            {
-                                args_list.push_back(arg);
-                            }
-
-                            replace_all(body, "$ARGUMENTS", skill_args);
-                            for (size_t i = 0; i < args_list.size(); ++i)
-                            {
-                                replace_all(body, "$ARGUMENTS[" + std::to_string(i) + "]", args_list[i]);
-                                replace_all(body, "$" + std::to_string(i), args_list[i]);
-                            }
-                        }
-                        std::string header = "Skill: " + target_name + "(located at " + skill_dir.string() + ")\n" + "Paths in the instructions below  are relative to that folder.\n\n";
-
-                        tool_output = header + body;
-                    }
-                    else
-                    {
-                        tool_output = "Error:Skill not found";
-                    }
-                } // last
-
-                messages.push_back({{"role", "tool"},
-                                    {"tool_call_id", call_id},
-                                    {"content", tool_output}});
-            }
-        }
-        else
-        {
-            // no tool call
-            if (message.contains("content") && !message["content"].is_null())
-            {
-                // Fallback to standard mesage content if no tool call was made
-                std::cout << message["content"].get<std::string>();
-            }
-            break;
-        }
-    }
     return 0;
 }
 
