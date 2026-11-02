@@ -101,6 +101,92 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
     std::cerr << "DEBUG 2: API key found\n";
 
     // =========================================================================
+    // 1. DISCOVER AVAILABLE SKILLS FIRST (Populate available_skills)
+    // =========================================================================
+
+    std::map<std::string, std::string> available_skills;
+    // key--> skill name , value=skill description
+
+    // path to the skills diectory relative to where program is executed
+    std::filesystem::path skills_dir = ".claude/skills"; //  stores the path to skill directory/path inside .claude directory
+
+    // stores path no the actual folder
+
+    // chekcing if .claude/skills is actually exists and is a folder before scanning
+    if (std::filesystem::exists(skills_dir) && std::filesystem::is_directory(skills_dir))
+    {
+        // Iterating thorugh each elemnt inside ".claude/skills/" "./claude/skills/apple"
+        for (const auto &entry : std::filesystem::directory_iterator(skills_dir))
+        {
+            // Each skill is a folder , so loose file if any exisy
+            if (entry.is_directory())
+            {
+                // construct the path to SKILL.md inside subfolder ".claude/skills/<folder>/SKILL.md"
+                std::filesystem::path skill_file = entry.path() / "SKILL.md"; // '/' joins filesystem paths
+                // proceed if SKILL.md actually exists inside this skill folde
+
+                if (std::filesystem::exists(skill_file))
+                {
+                    std::ifstream file(skill_file); // open the file
+                    std::string line;
+                    // State flag--> tracks whether ur inside "---" formatter block
+                    /**
+                     * frontmatter is a meta data sectio n qat the beginnig of a document often writtemn using
+                     * YAML and surrounded by ---
+                     */
+                    bool in_frontmatter = false;
+                    std::string name = "";
+                    std::string description = "";
+
+                    while (std::getline(file, line)) // read every line from the file
+                    {
+                        // while going through every line line may contain ---\r carriage return \n is removed automatically have to remove it
+                        if (!line.empty() && line.back() == '\r')
+                        {
+                            line.pop_back();
+                        }
+
+                        // check for the YAML frontmatter boundary marker "---"
+
+                        if (line == "---")
+                        {
+                            if (!in_frontmatter) // 1st "---" frontmatter
+                            {
+                                in_frontmatter = true;
+                                continue;
+                            }
+                            else
+                            {
+                                // second "---" encountered :frontmatter is finished
+                                // break out of the loop
+                                break;
+                            }
+                        }
+                        // if we are inside the two ---
+                        if (in_frontmatter)
+                        {
+                            if (line.rfind("name: ", 0) == 0)
+                            {
+                                // extract everythingg after name
+                                name = line.substr(6);
+                            }
+                            else if (line.rfind("description: ", 0) == 0)
+                            {
+                                // extract everythinh after descriptiom
+                                description = line.substr(13);
+                            }
+                        }
+                    }
+                    if (!name.empty() && !description.empty())
+                    {
+                        available_skills[name] = description;
+                    }
+                }
+            }
+        }
+    }
+
+    // =========================================================================
     // STAGE SKILL STACKING AND INVOCATION
     // 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
     // skill is reusable instructon template wher as argument is u passass template i.e giving additional knowledge so it can perform task
@@ -251,87 +337,7 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
     //__________________________________________________________________________________
     // PROGRESSIVE DISCLOSURE (System Prompt Discovery)
     //__________________________________________________________________________
-    std::map<std::string, std::string> available_skills;
-    // key--> skill name , value=skill description
 
-    // path to the skills diectory relative to where program is executed
-    std::filesystem::path skills_dir = ".claude/skills"; //  stores the path to skill directory/path inside .claude directory
-
-    // stores path no the actual folder
-
-    // chekcing if .claude/skills is actually exists and is a folder before scanning
-    if (std::filesystem::exists(skills_dir) && std::filesystem::is_directory(skills_dir))
-    {
-        // Iterating thorugh each elemnt inside ".claude/skills/" "./claude/skills/apple"
-        for (const auto &entry : std::filesystem::directory_iterator(skills_dir))
-        {
-            // Each skill is a folder , so loose file if any exisy
-            if (entry.is_directory())
-            {
-                // construct the path to SKILL.md inside subfolder ".claude/skills/<folder>/SKILL.md"
-                std::filesystem::path skill_file = entry.path() / "SKILL.md"; // '/' joins filesystem paths
-                // proceed if SKILL.md actually exists inside this skill folde
-
-                if (std::filesystem::exists(skill_file))
-                {
-                    std::ifstream file(skill_file); // open the file
-                    std::string line;
-                    // State flag--> tracks whether ur inside "---" formatter block
-                    /**
-                     * frontmatter is a meta data sectio n qat the beginnig of a document often writtemn using
-                     * YAML and surrounded by ---
-                     */
-                    bool in_frontmatter = false;
-                    std::string name = "";
-                    std::string description = "";
-
-                    while (std::getline(file, line)) // read every line from the file
-                    {
-                        // while going through every line line may contain ---\r carriage return \n is removed automatically have to remove it
-                        if (!line.empty() && line.back() == '\r')
-                        {
-                            line.pop_back();
-                        }
-
-                        // check for the YAML frontmatter boundary marker "---"
-
-                        if (line == "---")
-                        {
-                            if (!in_frontmatter) // 1st "---" frontmatter
-                            {
-                                in_frontmatter = true;
-                                continue;
-                            }
-                            else
-                            {
-                                // second "---" encountered :frontmatter is finished
-                                // break out of the loop
-                                break;
-                            }
-                        }
-                        // if we are inside the two ---
-                        if (in_frontmatter)
-                        {
-                            if (line.rfind("name: ", 0) == 0)
-                            {
-                                // extract everythingg after name
-                                name = line.substr(6);
-                            }
-                            else if (line.rfind("description: ", 0) == 0)
-                            {
-                                // extract everythinh after descriptiom
-                                description = line.substr(13);
-                            }
-                        }
-                    }
-                    if (!name.empty() && !description.empty())
-                    {
-                        available_skills[name] = description;
-                    }
-                }
-            }
-        }
-    }
     //____________________________________________
     // INITIALIZE CONVERSATION HISTORY
     //____________________________________________
@@ -403,6 +409,18 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
     }
 
                                  ));
+
+    tools.push_back(json::object({{"type", "function"},
+                                  {"function", json::object({{"name", "Skill"},
+                                                             {"description", "Load a skill's instruction into the conversation"},
+                                                             {"parametes", json::object({{"type", "object"},
+                                                                                         {"required", json::array({"name"})},
+                                                                                         {"properties", json::object({{"name", json::object({{"type", "string"},
+                                                                                                                                             {"description", "The name of the skill to use"}})},
+                                                                                                                      {"args", json::object({{"type", "string"},
+                                                                                                                                             {"description", "Optional arguments for the skill"}})}})}})}})}})
+
+    );
     //***********************************************************************
     // AGENTIC LOOP
     //********************************************* */
@@ -569,11 +587,15 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
                     std::string header = "Skill: " + function_name + "(located at " + skill_dir.string() + ")\n" + "Path in the instruction below  are relative to that folder.\n\n";
                     tool_output = header + body;
                 }
-                else if (function_name == "Skill")
+                else if (function_name == "Skill" || function_name == "skill")
                 {
                     // In case the model calls a tool named 'Skill' with {"skill": "<name>"}
                     std::string target_name = "";
 
+                    if (args.contains("skill_name"))
+                    {
+                        target_name = args["skill_name"];
+                    }
                     if (args.contains("skill"))
                     {
                         target_name = args["skill"];
@@ -588,14 +610,38 @@ int main(int argc, char *argv[]) // argc --> argument count  how many command li
                         std::filesystem::path skill_path = skill_dir / "SKILL.md";
                         std::string body = read_skill_body(skill_path);
 
-                        std::string header = "Skill: " + target_name + "(located at " + skill_dir.string() + ")\n" + "Path in the instructions below  are relative to that folder.\n\n";
+                        std::string skill_args = "";
+                        if (args.contains("args") && !args["args"].is_null())
+                        {
+                            skill_args = args["args"].get<std::string>();
+                        }
+                        // learntgsi part
+                        if (!skill_args.empty())
+                        {
+                            std::vector<std::string> args_list;
+                            std::istringstream arg_stream(skill_args);
+                            std::string arg;
+                            while (arg_stream >> arg)
+                            {
+                                args_list.push_back(arg);
+                            }
+
+                            replace_all(body, "$ARGUMENTS", skill_args);
+                            for (size_t i = 0; i < args_list.size(); ++i)
+                            {
+                                replace_all(body, "$ARGUMENTS[" + std::to_string(i) + "]", args_list[i]);
+                                replace_all(body, "$" + std::to_string(i), args_list[i]);
+                            }
+                        }
+                        std::string header = "Skill: " + target_name + "(located at " + skill_dir.string() + ")\n" + "Paths in the instructions below  are relative to that folder.\n\n";
+
                         tool_output = header + body;
                     }
                     else
                     {
                         tool_output = "Error:Skill not found";
                     }
-                }
+                } // last
 
                 messages.push_back({{"role", "tool"},
                                     {"tool_call_id", call_id},
