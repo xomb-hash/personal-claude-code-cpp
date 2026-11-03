@@ -1,34 +1,36 @@
-[![progress-banner](https://backend.codecrafters.io/progress/claude-code/98a20f68-d9b0-44d6-a63b-e8676044798f)](https://app.codecrafters.io/users/xomb-hash?r=2qF)
+<p align="center">
+  <img src="https://raw.githubusercontent.com/xomb-hash/personal-claude-code-cpp/main/assets/banner.svg" alt="Personal Coding Harness" width="900"/>
+</p>
+# C++ AI Agent CLI
 
-This is a starting point for C++ solutions to the
-["Build Your own Claude Code" Challenge](https://codecrafters.io/challenges/claude-code).
+This repository contains a custom-built, autonomous AI coding assistant written entirely in C++. Inspired by advanced CLI agents, it uses Large Language Models (LLMs) to understand code, execute terminal commands, and perform actions through a robust tool-calling architecture.
 
-Claude Code is an AI coding assistant that uses Large Language Models (LLMs) to
-understand code and perform actions through tool calls. In this challenge,
-you'll build your own Claude Code from scratch by implementing an LLM-powered
-coding assistant.
+The project implements a complete agentic loop, HTTP RESTful API integration for LLM communication, OpenAI-compatible tool calling, and a recursive subagent skills framework.
 
-Along the way you'll learn about HTTP RESTful APIs, OpenAI-compatible tool
-calling, agent loop, and how to integrate multiple tools into an AI assistant.
+## Key Architecture & Features
 
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
+* **Native Tool Calling:** The agent autonomously executes local system tasks using built-in `Read`, `Write`, and `Bash` execution tools, allowing it to modify code and run terminal commands directly.
+* **Dynamic Skill Discovery:** Automatically scans the `.claude/skills/` directory for custom agent skills. It parses YAML-style frontmatter to dynamically register tool descriptions and capabilities to the LLM's system prompt at runtime.
+* **Argument Substitution:** Supports stacking multiple skills in a single prompt (e.g., `/lint /test src/main.cpp`) with automatic `$ARGUMENTS` injection into the skill templates.
+* **Recursive Subagents (`context: fork`):** Complex skills run in completely isolated conversational contexts. The main agent spawns a secondary event loop for the subagent, returning only the final execution result back to the main conversation. This strictly preserves token context limits and prevents context-bleeding/hallucinations.
+* **Bundled Script Execution:** Skills can bundle their own relative shell scripts and execute them securely without hardcoding absolute system paths.
 
-# Passing the first stage
+## Tech Stack
 
-The entry point for your `claude-code` implementation is in `src/main.cpp`.
-Study and uncomment the relevant code, and submit to pass the first stage:
+* **Language:** C++17 / C++20
+* **Networking:** `cpr` (C++ Requests) for HTTP RESTful API communication
+* **Data Handling:** `nlohmann/json` for robust JSON serialization and deserialization
+* **LLM Provider:** OpenRouter API (Supports Anthropic Claude 3.5 Sonnet, Haiku, etc.)
 
+## Getting Started
+
+The main entry point for the agent implementation is located in `src/main.cpp`.
+
+### 1. Prerequisites
+Ensure you have `cmake` and a compatible C++ compiler installed on your local machine. The project relies on `vcpkg` for dependency management (`cpr` and `nlohmann-json`).
+
+### 2. Environment Variables
+You must set your OpenRouter credentials before running the agent:
 ```sh
-codecrafters submit
-```
-
-# Stage 2 & beyond
-
-Note: This section is for stages 2 and beyond.
-
-1. Ensure you have `cmake` installed locally.
-2. Run `./your_program.sh` to run your program, which is implemented in
-   `src/main.cpp`.
-3. Run `codecrafters submit` to submit your solution to CodeCrafters. Test
-   output will be streamed to your terminal.
+export OPENROUTER_API_KEY="your_api_key_herexyz"
+export OPENROUTER_BASE_URL="[https://openrouter.ai/api/v1](https://openrouter.ai/api/v1-dont use )"
